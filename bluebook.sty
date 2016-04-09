@@ -1,0 +1,1129 @@
+%===============================================================================
+% bluebook.sty - Automated Bluebook citations 
+% Copyright (C) 2009-2013  Christopher De Coro
+%
+% This file is part of the LaWTeX package, for more information, see:
+%   Project Homepage: http://www.cs.princeton.edu/~cdecoro/lawtex/ 
+%   Code Repository: https://sourceforge.net/projects/lawtex/
+%
+% This program is free software: you can redistribute it and/or modify
+% it under the terms of the GNU General Public License as published by
+% the Free Software Foundation, either version 3 of the License, or
+% (at your option) any later version.
+%
+% This program is distributed in the hope that it will be useful,
+% but WITHOUT ANY WARRANTY; without even the implied warranty of
+% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+% GNU General Public License for more details.
+%
+% You should have received a copy of the GNU General Public License
+% along with this program.  If not, see <http://www.gnu.org/licenses/>.
+%===============================================================================
+
+%TODO: 
+%If short cite to "supra" is in same note, omit "note"
+%Make SetIndexName work for all source types (currently just statutes) 
+
+%NOTE: This file is self-documented, and when all lines marked with %% are pulled 
+%      out into their own file, they form a valid latex document. To make the docs:
+% cat bluebook.sty | sed -n 's/^\%\%\(.*\)/\1/p' > bluebook-doc.tex; pdflatex bluebook-doc.tex 
+
+%=========================BEGIN DOCUMENTATION PREAMBLE==========================
+%%\parskip=6pt
+%%\parindent=1.5em
+%%\leftskip=0em
+%%\frenchspacing
+%%\font\parasymbolfont=phvr at 10pt
+%%\font\sectionsymbolfont=pncr at 10pt
+%=========================END DOCUMENTATION PREAMBLE===========================
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{bluebook}[2011/11/11 Legal Bluebook-style Citations]
+
+\RequirePackage{ifthen} 
+\RequirePackage{multind} 
+\RequirePackage{xstring} 
+\RequirePackage{xspace} 
+\RequirePackage{url} 
+%\def\url@leostyle{\@ifundefined{selectfont}{\def\UrlFont{\sf}}{\def\UrlFont{\small\ttfamily}}}
+\def\url@leostyle{\def\UrlFont{\footnotesize\ttfamily}}
+\urlstyle{leo}
+
+%Internal global variables
+\newcommand{\@bbSignal}{}
+\newcommand{\@bbLastSource}{}         %Holds the last source, used for determining Id 
+\newcommand{\@bbLastPinPage}{}        %Holds the pin page of the last source, used for determining Id
+\newcommand{\@bbLastVol}{}            %Holds the pin page of the last source, used for determining Id
+\newboolean{@bbCapNextSource}         %Used by the intro signals to supress capitalization of the next Id
+\setboolean{@bbCapNextSource}{true}   %By default, Id is capitalized
+\newboolean{@bbInFootnote}            %We redefine \footnote to set this
+\newboolean{@bbLawReviewMode}
+\setboolean{@bbLawReviewMode}{false}	
+\newcounter{@bbSequentialIds}
+
+%Helper rountines - we should consider if these need to be renamed to avoid clashes
+\def\Def#1#2{\expandafter\def\csname#1\endcsname{#2}}
+\def\EDef#1#2{\expandafter\edef\csname#1\endcsname{#2}}
+\def\ProtectedEDef#1#2{\expandafter\protected@edef\csname#1\endcsname{#2}}
+\def\XDef#1#2{\expandafter\xdef\csname#1\endcsname{#2}}
+\def\ProtectedXDef#1#2{\expandafter\protected@xdef\csname#1\endcsname{#2}}
+\def\GDef#1#2{\expandafter\gdef\csname#1\endcsname{#2}}
+\def\Call#1{\csname#1\endcsname}
+\def\SafeUnskip{\ifvmode\relax\else\unskip\fi}
+\def\globalsetboolean#1#2{\globaldefs=1\setboolean{#1}{#2}\globaldefs=0\relax}
+
+\def\ifempty#1#2#3{\if\relax\expandafter\detokenize\expandafter{#1}\relax #2\else #3\fi} 
+\def\ifpin#1{\ifempty{##2}{}{#1}}
+\def\FillIn#1#2#3{\noexpand\edef\@tmp{#2}\ifempty{\@tmp}{}{#1#2#3}}
+\def\IfFootnote#1{\ifthenelse{\boolean{@bbInFootnote}}{#1}{}}
+
+%% \section{Defining Sources}\vspace{-8pt}
+%%
+
+%%\citecase[Steel Seizure Case]{Youngstown Sheet & Tube Co. v. Sawyer, 343 U.S. 579 (1952)}
+%%\cmd{citecase}[Short Name]{Standard Case Citation}[Defines a new case citation, using standard citation form.]
+%% \begin{Example}
+%%   %\citecase{Lochner v. New York, 198 U.S. 45 (1905)}
+%%   %\citecase[Steel Seizure Case]
+%%   %{Youngstown Sheet & Tube Co. v. Sawyer, 343 U.S. 579 (1952)}
+%%   \cite[l]{Lochner}. \\ 
+%%   \pincite{Lochner}{48}. \\
+%%   \pincite{Steel Seizure Case}{602}. \\
+%%   \pincite{Lochner}{52}. \\
+%%   \See \pincite{Steel Seizure Case}{625}.
+%% \end{Example}
+ 
+%% \noindent In order to cite legal sources in the body of the text, first include a _\citecase_ command with the 
+%% case citation to define the case as a source. At the point in the text where the citation should appear, use
+%% _\cite_ or _\pincite_, passing the short name as an argument.  Spacing and commas are important (extra spaces will be preserved). 
+%%
+%% By default, the first party is used for the short name of the case, unless that party is 
+%% ``United States,'' ``State,'' ``Commonwealth,'' or ``People,'' in which case the second party is used.  
+%% To override the choice of short name, set the optional parameter. 
+%%
+%% With case citations that differ from the standard format, you may need to use the _\newcase_ command.
+%% For example, in ``\emph{Marbury v. Madison}, 5 U.S. (1 Cranch), 137 (1803)'', the extra parentheses around
+%% the ``(1~Cranch.)'' will throw off the parser. See the way that this is cited below. 
+%% 
+\newcommand{\citecase}[2][]{%
+	%Find the first space and paren, and cut it and everything else after as the parenthetical
+	\StrPosition{#2}{ (}[\@parenpos]%
+	\StrGobbleLeft{#2}{\numexpr \@parenpos-1}[\@paren]%
+	\StrLeft{#2}{\numexpr \@parenpos-1 }[\@withoutparen]%
+%
+	%With the parenthetical gone, we look for the LAST comma, and assume the citation is there to the end
+	\StrCount{\@withoutparen}{,}[\@commacount]%
+	\StrPosition[\@commacount]{\@withoutparen}{,}[\@lastcommapos]%
+	\StrGobbleLeft{\@withoutparen}{\@lastcommapos}[\@citation]%
+	\StrLeft{\@withoutparen}{\numexpr \@lastcommapos-1}[\@withoutcitation]%
+	\edef\casename{\@withoutcitation}
+%
+	%Looking only at the citation, assume that from the LAST space to the end is the start page
+	\StrCount{\@citation}{ }[\@spacecount]%
+	\StrPosition[\@spacecount]{\@citation}{ }[\@lastspacepos]%
+	\StrGobbleLeft{\@citation}{\@lastspacepos}[\@startpage]%
+	\StrLeft{\@citation}{\numexpr \@lastspacepos-1}[\@reporter]%
+%
+	%The reporter may have a leading space, if so, chop it
+	\StrChar{\@reporter}{1}[\@firstchar]%
+	\IfEq{\@firstchar}{ }{\StrGobbleLeft{\@reporter}{1}[\@reporter]}{}%
+%
+	%\chopcitation{\withoutparen}{\withoutcitationiii}{\reporteriii}{\startpageiii}
+	%\chopcitation{\withoutcitationiii}{\withoutcitationii}{\reporterii}{\startpageii}
+	%\chopcitation{\withoutcitationii}{\withoutcitation}{\reporter}{\startpage}
+%
+	%The parenthetical may have a leading space, if so, chop it
+	\StrChar{\@paren}{1}[\@firstchar]%
+	\IfEq{\@firstchar}{ }{\StrGobbleLeft{\@paren}{1}[\@paren]}{}%
+%
+	%Finally, cut out the second party
+	\IfSubStr{\@withoutcitation}{ v. }{\StrBefore{\@withoutcitation}{ v. }[\@firstpartyname]}{\edef\@firstpartyname{\@withoutcitation}}%
+	\IfSubStr{\@withoutcitation}{ v. }{\StrBehind{\@withoutcitation}{ v. }[\@secondpartyname]}{}%
+%
+	%By default, the shortname is set to the first party
+	\edef\@shortname{\@firstpartyname}%
+%
+	%If first party is United States, State, People, or Commonwealth use second party as short name
+	\IfEq{\@firstpartyname}{United States}{\edef\@shortname{\@secondpartyname}}{}%
+	\IfEq{\@firstpartyname}{State}{\edef\shortname{\@secondpartyname}}{}%
+	\IfEq{\@firstpartyname}{People}{\edef\shortname{\@secondpartyname}}{}%
+	\IfEq{\@firstpartyname}{Commonwealth}{\edef\shortname{\@secondpartyname}}{}%
+%
+	%If a short name is given explicitly, use that to override
+	\IfEq{#1}{}{}{\edef\@shortname{#1}}%
+%
+	\newcase{\@shortname}{\@withoutcitation}{\@reporter}{\@startpage}{\@paren}%
+}
+
+%%
+%%\cmd{newcase}{Short Name}{Full Name}{Reporter}{Starting Page}{Parenthetical}[Defines a new case citation.]
+%% \newcase{Marbury}{Marbury v. Madison}{5 U.S. (1 Cranch)}{137}{(1803)}
+%% \begin{Example}
+%%   %\newcase{Marbury}{Marbury v. Madison}{5 U.S. (1 Cranch)}{137}{(1803)}
+%%   \pincite{Marbury}{140}.
+%% \end{Example}
+%%
+%% \noindent The _\newcase_ command is equivalent to the _\citecase_ command (which in fact calls _\newcase_ internally). 
+%% Generally, it is simpler to use the _\citecase_ command, but _\newcase_ is necessary for case citations that differ from the usual, 
+%% such as \textit{Marbury}, above, because of the parentheses around the ``(1 Cranch)''. 
+%%
+%%% Actually invoke the commands for the documentation:
+%%
+\newcommand{\newcase}[6][empty]{ 
+	\EDef{#2@Type}{Case}
+	\EDef{#2@IndexType}{Case}
+	\EDef{#2@ShortName}{#2}
+	\ProtectedEDef{#2@FullName}{#3}
+	\EDef{#2@Reporter}{#4}
+	\EDef{#2@StartPage}{#5}
+	\EDef{#2@Parenthetical}{#6}
+	\newboolean{#2@FirstUse} 
+	\setboolean{#2@FirstUse}{true}
+	\XDef{#2@LastNote}{0}
+}
+
+%%
+%%\cmd{newbook}{Short Name}{Authors}{Title}{Parenthetical}[Define a new book citation.]
+%% \begin{Example}
+%%   \newbook{Prosser and Keaton}{William Lloyd Prosser & W. Page Keaton}
+%%     {The Law of Torts}{(2nd ed., 1953)} 
+%%   \newbook{Schelling}{Thomas Schelling}
+%%     {A Process of Residential Segregation: Neighborhood Tipping, 
+%%     {\upshape\it reprinted in} Economic Foundations of Property Law {\upshape 307,}}
+%%     {(Bruce A. Ackerman ed., 1975)}
+%%   \pincite{Schelling}{308} \\
+%%   \pincite{Prosser and Keaton}{vol. 2, 15}. \\
+%%   \pincite{Prosser and Keaton}{vol. 2, 345}. \\
+%%   \pincite{Prosser and Keaton}{vol. 4, 876}. \\ 
+%%   \pincite{Schelling}{310}.
+%% \end{Example}
+%% 
+%% \noindent This command introduces a new book citation. Such citations are first written with a 
+%% long name that includes [volume] author, title, citation and parenthetical. Subsequent invocations will use the short name given by the first argument,
+%% which is also used as the argument to _\cite_, followed by \textit{supra}. In law-review mode, this is further followed by ``note n,'' the first 
+%% footnote in which the article was cited. Note that any _\textit_ or _\emph_ and their braces are stripped out of the short name (see _\newarticle_ for an example). 
+%%
+%% To cite a particular volume, use a pincite in the form _\pincite_\arg{Short Name}\{vol. 1, 123\}. That is, it must start with ``vol.''
+%% followed by exactly one space, then the number followed by a comma and another space. 
+%%
+%% This command is also used for a \textit{reprinted in} citation. Note the use of _\upshape_ and _\it_ (or equivalent) that is necessary
+%% to ensure the correct formatting.
+%%
+\newcommand{\newbook}[4]{ 
+	\begingroup
+		\def\textit##1{##1}
+		\def\emph##1{##1}
+		\def\textsc##1{##1}
+		\xdef\@HandleName{#1}
+		\XDef{\@HandleName @Type}{Book}
+		\XDef{\@HandleName @IndexType}{Other}
+		\XDef{\@HandleName @Authors}{#2}
+		\ProtectedXDef{\@HandleName @Title}{#3}
+		\GDef{\@HandleName @Parenthetical}{#4}
+%
+		\globaldefs=1
+		\newboolean{\@HandleName @FirstUse} 
+		\setboolean{\@HandleName @FirstUse}{true}
+		\globaldefs=0
+	\endgroup%
+%
+	\XDef{\@HandleName @LastNote}{0}%
+	\GDef{\@HandleName @ShortName}{#1}%
+}
+
+%%
+%%\cmd{newarticle}{Short Name}{Authors}{Title}{Journal}{Start Page}{Parenthetical}[Define a new article citation.]
+%% \begin{Example}
+%%   \newarticle{Note, \textit{The Ministerial Exception}}
+%%     {Note}{The Ministerial Exception To Title VII}
+%%     {121 Harv. L. Rev.}{1776}{(2009)}
+%%   \newarticle{Ward}{Barbara Ward}{Progress for a Small Planet}
+%%     {Harv. Bus. Rev.}{Sept.--Oct. 1979, at 89}{}
+%%   \cite[l]{Note, The Ministerial Exception}.  \\
+%%   \pincite{Ward}{90}. \\
+%%   \pincite{Note, The Ministerial Exception}{1800}. 
+%% \end{Example}
+%%
+%% \noindent This command introduces a new law-review article-type citation. Such citations are first written with a 
+%% long name that includes author, title, citation and parenthetical. Subsequent invocations will use the short name given by the first argument,
+%% which is also used as the argument to _\cite_, followed by \textit{supra}. In law-review mode, this is further followed by ``note n,'' the first 
+%% footnote in which the article was cited. Note that any _\textit_ or _\emph_ and their braces are stripped out of the short name. 
+%%
+%% Note that in law review mode, the journal name is by default set in \textsc{Small Caps}, which is the Bluebook standard for 
+%% consecutivly-paginated journals. To produce standard type, use the
+%% form of _{{\upshape Harv. L. Rev.}}_ when defining the citation. 
+%%
+\newcommand{\newarticle}[6]{ 
+	\begingroup
+		\def\textit##1{##1}
+		\def\emph##1{##1}
+		\xdef\@HandleName{#1}
+		\XDef{\@HandleName @Type}{Article}
+		\XDef{\@HandleName @IndexType}{Other}
+		\XDef{\@HandleName @Authors}{#2}
+		\XDef{\@HandleName @Title}{#3}
+		\ProtectedXDef{\@HandleName @Reporter}{#4}
+		\XDef{\@HandleName @StartPage}{#5}
+		\XDef{\@HandleName @Parenthetical}{#6}
+%
+		\globaldefs=1
+		\newboolean{\@HandleName @FirstUse} 
+		\setboolean{\@HandleName @FirstUse}{true}
+		\globaldefs=0
+	\endgroup%
+%
+	%\XDef{#2@LastNote}{0}%
+	\XDef{\@HandleName @LastNote}{0}%
+	\GDef{\@HandleName @ShortName}{#1}%
+}
+
+\newcommand{\newcollection}[2]{
+	\begingroup
+		\def\textit##1{##1}
+		\def\emph##1{##1}
+		\def\textsc##1{##1}
+		\xdef\@HandleName{#1}
+		\XDef{\@HandleName @Type}{Collection}
+		\XDef{\@HandleName @IndexType}{}%The collection itself is not listed in the index
+		\XDef{\@HandleName @Title}{#1}
+		\GDef{\@HandleName @Parenthetical}{#2}
+%
+		\globaldefs=1
+		\provideboolean{\@HandleName @FirstUse} 
+		\setboolean{\@HandleName @FirstUse}{true}
+		\globaldefs=0
+	\endgroup%
+%
+	\XDef{\@HandleName @LastNote}{0}%
+	\GDef{\@HandleName @ShortName}{#1}%
+}
+
+
+%%
+%%\cmd{newincollection}{Short Name}{Authors}{Article Title}{Collection Title}{Page}{Parenthetical}[Defines a new article/chapter-in-collection citation.]
+%%
+%% \begin{Example}
+%%   \newincollection{Allen, \textit{Oration}}{John Allen}
+%%     {Oration Upon The Beauties Of Liberty}
+%%     {Political Sermons of the American Founding Era}{vol. 1, 58}
+%%     {(Ellis Sandoz ed., 1991)}
+%%   \newincollection{Mather}{Moses Mather}{America's Appeal To The Impartial World}
+%%     {Political Sermons of the American Founding Era}{vol. 1, 103}
+%%     {(Ellis Sandoz ed., 1991)}
+%%
+%%   \pincite{Allen, Oration}{62}. \\
+%%   \pincite{Mather}{103}. \\
+%%   \pincite{Allen, Oration}{78}. \\
+%%   \pincite{Mather}{119}. \\
+%% \end{Example}
+%%
+%% Note that the parenthetical will be placed after the collection title, and therefore not printed if the collection itself is cited a second time. Note additionally
+%% that if the parenthetical changes across definitions for multiple documents in the collection, whichever source is actually cited first defines the parenthetical that is used.
+%% 
+\newcommand{\newincollection}[6]{ 
+\tracingmacros=2
+	\begingroup
+		\def\textit##1{##1}
+		\def\emph##1{##1}
+		\def\textsc##1{##1}
+		\xdef\@HandleName{#1}
+		\XDef{\@HandleName @Type}{InCollection}
+		\XDef{\@HandleName @IndexType}{Other}
+		\XDef{\@HandleName @Authors}{#2}
+		\XDef{\@HandleName @Title}{#3}
+		\XDef{\@HandleName @CollectionTitle}{#4}
+		\GDef{\@HandleName @StartPage}{#5}
+		\GDef{\@HandleName @Parenthetical}{#6}
+		%\XDef{\@HandleName @FullName}{#1}	
+%
+		\globaldefs=1
+		\newboolean{\@HandleName @FirstUse} 
+		\setboolean{\@HandleName @FirstUse}{true}
+		\globaldefs=0
+	\endgroup%
+%
+	\XDef{\@HandleName @LastNote}{0}%
+	\GDef{\@HandleName @ShortName}{#1}%
+%
+	\newcollection{#4}{#6}%
+}
+
+%%
+%%\cmd{newinsingleauthorcollection}{Short Name}{Author}{Title}{Collection Title}{Page}{Parenthetical}[Defines a citation to a single-author collection.]
+%%
+%% \begin{Example}
+%%   \newinsingleauthorcollection{Holmes}{Oliver Wendell Holmes}
+%%     {Law in Science and Science in Law}{Collected Legal Papers}
+%%     {210}{(1920)}
+%%   \pincite{Holmes}{vol. 1, 120}. \\
+%%   \pincite[s]{Holmes}{vol. 1, 133}. 
+%% \end{Example}
+%%
+%% \noindent This command is similar to _\newincollection_, for collections whose documents are all from the same author. The Bluebook specifies that these should
+%% be cited like a book, and therefore with the volume number before the author, and the author's name in small caps.
+%%
+\newcommand{\newinsingleauthorcollection}[6]{ 
+\tracingmacros=2
+	\begingroup
+		\def\textit##1{##1}
+		\def\emph##1{##1}
+		\def\textsc##1{##1}
+		\xdef\@HandleName{#1}
+		\XDef{\@HandleName @Type}{InSingleAuthorCollection}
+		\XDef{\@HandleName @IndexType}{Other}
+		\XDef{\@HandleName @Authors}{#2}
+		\XDef{\@HandleName @Title}{#3}
+		\XDef{\@HandleName @CollectionTitle}{#4}
+		\GDef{\@HandleName @StartPage}{#5}
+		\GDef{\@HandleName @Parenthetical}{#6}
+		%\XDef{\@HandleName @FullName}{#1}	
+%
+		\globaldefs=1
+		\newboolean{\@HandleName @FirstUse} 
+		\setboolean{\@HandleName @FirstUse}{true}
+		\globaldefs=0
+	\endgroup%
+%
+	\XDef{\@HandleName @LastNote}{0}%
+	\GDef{\@HandleName @ShortName}{#1}%
+%
+	\newcollection{#4}{#6}%
+}
+
+%%
+%%\cmd{newstatute}{Short Name}{Parenthetical}[Define a new statute citation.]
+%% \begin{Example}
+%%   \newstatute{42 U.S.C.}{(2006)}
+%%   \newstatute{Administrative Procedure Act}{(2006)}
+%%   \pincite{Administrative Procedure Act}{\S 1, 5 U.S.C. \S 551}. \\
+%%   \pincite{Administrative Procedure Act}{\S 2}. \\
+%%   \pincite{42 U.S.C.}{\S 1983}.
+%% \end{Example}
+%%
+\newcommand{\newstatute}[2]{
+	\begingroup
+		\xdef\@HandleName{#1}
+		\XDef{\@HandleName @Type}{Statute}
+		\XDef{\@HandleName @IndexType}{Statute}
+
+		\XDef{\@HandleName @ShortName}{#1}
+		\XDef{\@HandleName @IndexName}{#1 !}
+		\XDef{\@HandleName @Parenthetical}{#2}
+
+		\globaldefs=1
+		\newboolean{\@HandleName @FirstUse} 
+		\setboolean{\@HandleName @FirstUse}{true}
+		\globaldefs=0
+	\endgroup
+%
+	\XDef{\@HandleName @LastNote}{0}%
+}
+
+%%
+%%\cmd{newmisc}{Short Name}{Full Name}[Define a general source by explicitly providing long and short citations.]
+%% \begin{Example}
+%%   \newmisc{Bill of Rights 1689}{Act Declaring the Rights and Liberties of the 
+%%     Subject and Settling the Succession of the Crown (Bill of Rights), 
+%%     1 W. & M., sess. 2 c. 2\pin{, }{} (1689)}
+%%   
+%%   \pincite{Bill of Rights 1689}{\S 2}. \\
+%%   \pincite[s]{Bill of Rights 1689}{\S 3}.
+%% \end{Example}
+%%
+%% \noindent The long cite may have the command _\Pin_\arg{Text Before}\arg{Text After}, which in the case of 
+%% a pincite, will insert the cite at the given location, surrounded by the text as indicated.
+%
+\newcommand{\newmisc}[2]{
+	\Def{#1@Type}{Misc}
+	\Def{#1@IndexType}{Other}
+	\EDef{#1@ShortName}{#1}
+	\Def{#1@FullName}{#2}
+	\newboolean{#1@FirstUse} 
+	\setboolean{#1@FirstUse}{true}
+}
+
+%Helper routine to chop up a citation string into its constituent parts
+%I think this was for multiple-reporter cites, but it is not yet implemented
+\newcommand{\chopcitation}[4]{
+	%With the parenthetical gone, we look for the LAST comma, and assume the citation is there to the end
+	\StrCount{#1}{,}[\commacount]%
+	\StrPosition[\commacount]{#1}{,}[\lastcommapos]%
+	\StrGobbleLeft{#1}{\lastcommapos}[\citation]%
+	\StrLeft{#1}{\numexpr \lastcommapos-1}[#2]%
+%
+	%Looking only at the citation, assume that from the LAST space to the end is the start page
+	\StrCount{\citation}{ }[\spacecount]%
+	\StrPosition[\spacecount]{\citation}{ }[\lastspacepos]%
+	\StrGobbleLeft{\citation}{\lastspacepos}[#4]%
+	\StrLeft{\citation}{\numexpr \lastspacepos-1}[\reporter]%
+%
+	%The reporter may have a leading space, if so, chop it
+	\StrChar{\reporter}{1}[\firstchar]%
+	\IfEq{\firstchar}{ }{\StrGobbleLeft{\reporter}{1}[#3]}{}%
+}
+
+%%\section{Citing Sources}
+%%
+%%\noindent\texttt{\large\bf\textbackslash{}[pin]cite} --- Cite a legal source using Bluebook style
+%%
+%%\noindent Usage: 
+%%
+%% \texttt{\textbackslash{}cite}[\textit{Formatting}]\{\textit{Short Name}\} \\
+%% \hspace*{\parindent}\texttt{\textbackslash{}pincite}[\textit{Formatting}]\{\textit{Short Name}\}\{\textit{Pin Page}\} 
+%%
+%% \begin{Example}
+%%   \cite[l]{Marbury}. \\ 
+%%   \pincite[i]{Marbury}{117}. \\
+%%   \pincite[s]{Marbury}{117}. \\
+%%   \pincite{Steel Seizure Case}{602}. \\
+%%   \pincite{Marbury}{122}. \\
+%%   \See \pincite[n]{Steel Seizure Case}{625}. \\
+%%   \Cf \pincite[s]{Steel Seizure Case}{625}.
+%% \end{Example}
+%%	 
+%% \noindent The optional first argument forces a particular citation form, which is useful where the correct form cannot be determined automatically
+%% (\textit{e.g.}, the rule that one may not use \Id. in the next citation after a string cite), or that one does not capitalize id. 
+%% when it appears in the middle of a sentence (although when using the signal macros _\See_, _\Seealso_, etc.) this will be
+%% handled automatically. These options consist of a single letter, from the list as follows:  
+%%
+%% \noindent
+%%	_l_ - Force long form citation, regardless if the source has appeared before. \\
+%%	_s_ - Force short form citation, even if this is the first cite to this source. \\
+%%	_n_ - Force reporter and page number-only citation (for cases only). \\
+%%	_I_ - If and only if ``\textit{id.}'' is used, force it to be capitalized. \\ 
+%%	_i_ - If and only if ``\textit{Id.}'' is used, force it to be non-capitalized. \\
+%%	_!_ - Record a cite at this location (and thus to the ToA / record Supra), but do not actually print anything. \\ 
+%%	_*_ - Print the citation here, but do not record it to the table of authorities.  
+%%
+
+%The command \@absorbperiod will remove the . from the token stream.
+%If this invocation is followed by a period, we remove it from the stream, but tell \bbsource to add it later (with flag "p")
+%Otherwise, \bbsource should not add a period, and use xspace to keep any space afterwards
+
+\def\@startcitation{}
+\def\@absorbperiod.{}
+%\def\absorbcomma,{}
+
+\renewcommand{\cite}[2][]{\@startcitation\@ifnextchar.{\@bbsource{#2}{}{#1.}\@absorbperiod}{\@bbsource{#2}{}{#1}\xspace}}
+\newcommand{\pincite}[3][]{\@startcitation\@ifnextchar.{\@bbsource{#2}{#3}{#1.}\@absorbperiod}{\@bbsource{#2}{#3}{#1}\xspace}}
+
+%%
+%%\cmd{Id, \textbackslash{}id}[Pin Page][Cite the previous source]
+%% \begin{Example}
+%%   \pincite{Marbury}{140}. \\
+%%   \See \id[140]. \\
+%%   \Id[141].
+%% \end{Example}
+%%
+%% \noindent The effect is to repeat the previous cite, including the previous pin page (unless the optional argument is used
+%% to cite a different page). _\Id_ should generally be followed by a period or other punctuation, as the trailing period 
+%% will not be added automatically.
+%%
+
+\newcommand{\Id}[1][]{\@ifnextchar.{\@bbId{#1}{I.}\@absorbperiod}{\@bbId{#1}{I}}}
+\newcommand{\id}[1][]{\@ifnextchar.{\@bbId{#1}{i.}\@absorbperiod}{\@bbId{#1}{i}}}
+\def\@bbId#1#2{\@bbsource{\@bbLastSource}{\ifempty{#1}{\@bbLastPinPage}{#1}}{#2}}
+
+%%\cmd{citetext}{Arbitrary text}[Automatically place law review citations in footnotes.]
+%%
+%% \noindent The purpose of this command is primarily to work with automatic footnotes in law review mode. 
+%% Whatever text is passed as its argument will automatically be put in a footnote, if it is not already in 
+%% a footnote (in which case _\citetext_ does nothing). If you are not using law review mode, this command 
+%% is not necessary. You would ordinarily put a space between the closing punctuation and the _\citetext_,
+%% the macro will automatically remove that space, if appropriate.
+%%
+\def\citetext#1{\@autofootnote{#1}}
+
+%\newcommand{\@citetext}[2] {%
+	%\ifthenelse{\not \boolean{@bbLawReviewMode} \or \boolean{@bbInFootnote}}%
+	%{%
+		%\ifthenelse{\equal{\detokenize{#1}}{\@bbLastSource}}
+			%{\emph{Id}}
+			%{\xdef\@bbLastSource{\detokenize{#1}}#1}#2%
+	%}
+	%{%
+		%\SafeUnskip\footnote{%
+			%\ifthenelse{\equal{\detokenize{#1}}{\@bbLastSource}}
+				%{\emph{Id.}abcd}
+				%{\xdef\@bbLastSource{\detokenize{#1}}#1}%
+			%#2}%
+	%}%
+%}
+
+%%\cmd{citeclause}{Arbitrary Text}[Cite arbitrary text in an intra-sentence citation clause]
+%%
+%%\noindent Example:
+%%
+%% \begin{quote}\texttt{It is the role of the judicial department to say what the law is \\ \textbackslash{}citeclause\{\textbackslash{}see \textbackslash{}cite\{Marbury\}\} and the present case is no exception.}\end{quote}
+%%
+%%\noindent Result (Normal Mode):
+%%
+%% \begin{quote}It is the role of the judicial department to say what the law is, \see \cite[s]{Marbury}, and the present case is no exception.\end{quote}
+%%
+%%\noindent Result (Law Review mode):
+%%
+%% \begin{quote}It is the role of the judicial department to say what the law is,\footnote{\See \cite[s]{Marbury}} and the present case is no exception.\end{quote}
+%%
+%% \noindent This function is probably not necessary for production use, but allows the samples to have one source code for both
+%% normal and lawreview mode. When using a citation clause in the middle of a sentence, use _\citeclause_ at the location,
+%% WITHOUT any surrounding punctutation. In standard mode, _\citeclause_ will add surrounding commas, unless the following
+%% character is a period, in which case it add a preceding comma and leaves the period to follow, as-is.
+%%
+%% In lawreview mode, _\citeclause_ will insert a preceding comma, and insert a footnote with the cited text immediately 
+%% after the comma, with no punctuation following -- UNLESS the following character is a period. In the latter case, 
+%% _\citeclause_ will add only a preceding period, with the footnote immediately following. Also, if the first token of the 
+%% citation clause is one of %% the pre-defined lowercase citation signals (_\see, \cf_ etc.), it will be automatically 
+%% converted to the uppercase equivalent.
+%%
+%% Note that in either case, _\citeclause_ is not able to properly handle a citation for a quote, in which case the punctuation
+%% should go inside the closing ''. In that case, you will either need to make the change manually when changing between
+%% normal and lawreview modes, or use the _\PeriodOrComma_ macro. The latter is a Period in lawreview, and a Comma normally. 
+%%
+%% If you're thinking this is more hassle than its worth, you're right. Feel free to just write out the correct form manually.
+
+\def\@absorb#1{}
+\def\absorb{\aftergroup\@absorb}
+
+\def\@CapLeadingSignal{\futurelet\@NextToken\@@CapLeadingSignal}
+\def\@@CapLeadingSignal{\begingroup%
+                           \ifx\@NextToken\see\See\globalsetboolean{@bbCapNextSource}{false}\absorb\else%
+                           \ifx\@NextToken\seealso\Seealso\globalsetboolean{@bbCapNextSource}{false}\absorb\else%
+                           \ifx\@NextToken\seeeg\Seeeg\globalsetboolean{@bbCapNextSource}{false}\absorb\else%
+                           \ifx\@NextToken\cf\Cf\globalsetboolean{@bbCapNextSource}{false}\absorb\else%
+                           \ifx\@NextToken\butsee\Butsee\globalsetboolean{@bbCapNextSource}{false}\absorb\else%
+                           \ifx\@NextToken\butcf\Butcf\globalsetboolean{@bbCapNextSource}{false}\absorb\else%
+                           \ifx\@NextToken\accord\Accord\globalsetboolean{@bbCapNextSource}{false}\absorb\else%
+                           \ifx\@NextToken\contra\Contra\globalsetboolean{@bbCapNextSource}{false}\absorb\else%
+                           \ifx\@NextToken\id\Id\absorb\else%
+                           \relax\fi\fi\fi\fi\fi\fi\fi\fi\fi\endgroup}
+
+\newcommand{\citeclause}[1]{%
+	\ifthenelse{\boolean{@bbLawReviewMode} \and \not \boolean{@bbInFootnote}}
+	{%
+		%In the case that we are in the body text in law review mode,
+		%add a comma, then the footnote UNLESS the next char is a period
+		\@ifnextchar.{%
+			\unskip{.}\footnote{\@CapLeadingSignal#1.}\@absorbperiod}
+		{%
+			\unskip,\footnote{\@CapLeadingSignal#1.} }%
+	}{%
+		%In the case that we will be inserting a citation in the flow of the text,
+		%surround the citation with commas, UNLESS a period follows, in which case only add a leading comma
+		\@ifnextchar.{\unskip, #1}{\unskip, #1,\xspace}%
+	}%
+}
+
+%%
+%%%\cmd{@autofootnote}{Put argument in a footnote, if in lawreview mode}
+%
+\newcommand{\@autofootnote}[1] {%
+	\ifthenelse{\not \boolean{@bbLawReviewMode} \or \boolean{@bbInFootnote}}%
+	{%
+		#1%
+	}
+	{%
+		\SafeUnskip\footnote{#1}%
+	}%
+}
+
+%%
+%%~\par
+%%
+%%\noindent
+%%\begingroup\raggedright\hyphenpenalty=10000\hangindent=1.5em
+%%\texttt{\bf \textbackslash{}Reporter, \textbackslash{}ShortName, \textbackslash{}FullName, \textbackslash{}StartPage, \textbackslash{}Parenthetical, \textbackslash{}Authors, \textbackslash{}BookTitle, \textbackslash{}SrcType, \textbackslash{}SupraNote, \textbackslash{}LastNote} \par\noindent
+%%\endgroup
+%% Usage: \\
+%%	_\Reporter_\arg{Short Name}, _\StartPage_\arg{Short Name}, \emph{etc.}
+%%
+%%\begin{Example}
+%%   \FullName{Steel Seizure Case} \\
+%%   \Reporter{Marbury} \\
+%%   \StartPage{Marbury} 
+%%\end{Example}
+%%
+%% \noindent These functions are predominantly helper functions used elsewhere in the code; they print components of the source. If the field
+%% that you have selected is inapplicable to the source, latex will give an error. Most should be clear by their name; _\Prefix_ is the 
+%% leading number of a statute source, if applicable (such as the ``42'' in ``42 U.S.C. \S 1983''). _\SrcType_ is one of ``Case,'' ``Book,'' 
+%% ``Statute,'' or ``Other.'' _\SupraNote_ is the first footnote in which a source appears. _\LastNote_ is the most recent note
+%% in which a source appears.
+%%
+
+\newcommand{\Reporter}[1]{\Call{#1@Reporter}}
+\newcommand{\ShortName}[1]{\Call{#1@ShortName}}
+\newcommand{\FullName}[1]{\Call{#1@FullName}}
+\newcommand{\StartPage}[1]{\Call{#1@StartPage}}
+\newcommand{\Parenthetical}[1]{\Call{#1@Parenthetical}}
+\newcommand{\Authors}[1]{\Call{#1@Authors}}
+\newcommand{\Title}[1]{\Call{#1@Title}}
+\newcommand{\CollectionTitle}[1]{\Call{#1@CollectionTitle}}
+\newcommand{\Sec}[1]{\Call{#1@Section}}
+\newcommand{\Vol}[1]{\Call{#1@Volume}}
+\newcommand{\Prefix}[1]{\Call{#1@Prefix}}
+\newcommand{\SrcType}[1]{\Call{#1@Type}}
+\newcommand{\SupraNote}[1]{\Call{#1@SupraNote}}
+\newcommand{\LastNote}[1]{\Call{#1@LastNote}}
+
+%%
+%% \cmd{SetIndexType}{Short Name}{New Index Type}[Change a source's destination index / table of authorities] 
+%%
+%% \noindent This command set the destination index for the source provided as their argument. The default index files are ``Case''
+%% ``Statute'' and ``Other,'' for cases, statutes, and everything else, respectively. _\SetIndexType_ can be used to alter the index file. 
+%% Note in particular that if _\SetIndexType_ is set to an empty string, indexing will be disabled for the given source. 
+%% The current index for a source can be queried with _\IndexType_. 
+%%
+\newcommand{\IndexType}[1]{\Call{#1@IndexType}}
+\newcommand{\SetIndexType}[2]{\EDef{#1@IndexType}{#2}}
+
+%%
+%% \cmd{SetIndexName}{Short Name}{Name To Appear In Index}[Change the appearance of a source in the index / table of authorities]
+%%
+%% \noindent This can be used to provide additional detail in the Table of Authorities that would not be appropriate in the flow of the text.
+%% For example, consider the Federal Rules of Civil Procedure:
+%%
+%% _\newstatute{Fed. R. Civ. P.}{}_ \\
+%% \hspace*{\parindent}_\SetIndexName{Fed. R. Civ. P.}{Federal Rules of Civil Procedure !Rule }_
+%%
+%% \noindent The second line ensures that ``Federal Rules of Civil Procedure'' will be written long form in the Table, and that each rule will
+%% be a subentry under this heading, to be preceded by ``Rule.'' Currently, this has effect only for statutes.
+%%
+\newcommand{\IndexName}[1]{\Call{#1@IndexName}}
+\newcommand{\SetIndexName}[2]{\EDef{#1@IndexName}{#2}}
+
+
+%\newcommand{\@bbLink}[1]{\href{http://web2.westlaw.com/find/default.wl?rs=WLW9.11&cite=77 US 1&vr=2.0&mt=LawSchoolPractitioner}{#1}}
+%\href{http://web2.westlaw.com/find/default.wl?rs=WLW9.11&cite=77\%20US\%201&vr=2.0&mt=LawSchoolPractitioner}{text}
+%http://web2.westlaw.com/find/default.wl?ifm=NotSet&rp=%2ffind%2fdefault.wl&sv=Split&utid=1&rs=WLW9.10&cite=421+US+1&fn=_top&mt=LawSchoolPractitioner&vr=2.0&pbc=9B14F39A
+\newcommand{\@bbLink}[1]{#1}
+
+\newcommand{\@bbCaseIndexCite}[2]{{\CF\@bbLink{\FullName{#1}}},\idxbreak\ \Reporter{#1}~\StartPage{#1} \Parenthetical{#1}}
+%\newcommand{\@bbBookIndexCite}[2]{\Authors{#1},\idxbreak\ \FillIn{}{\@vol}{ }{\em\Title{#1}} \Parenthetical{#1}}
+\newcommand{\@bbBookIndexCite}[2]{\Authors{#1},\idxbreak\ {\em\Title{#1}} \Parenthetical{#1}}
+%\newcommand{\@bbStatuteIndexCite}[2]{\ShortName{#1} !#2}
+\newcommand{\@bbStatuteIndexCite}[2]{\IndexName{#1}#2}
+\newcommand{\@bbArticleIndexCite}[2]{\Authors{#1}, {\ATF\Title{#1}},\idxbreak\ {\JTF\Reporter{#1}}~\StartPage{#1} \Parenthetical{#1}}
+\newcommand{\@bbInCollectionIndexCite}[2]{\Authors{#1}, \Title{#1}}
+\newcommand{\@bbInSingleAuthorCollectionIndexCite}[2]{\Authors{#1}, \Title{#1}}
+%\newcommand{\@bbMiscIndexCite}[2]{{\def\pin##1##2{}\FullName{#1}}}
+
+\def\@bbMiscIndexCite#1#2{\FullName{#1}}
+
+%Long-form citation, with and without a pin cite
+\newcommand{\@bbCaseLongCite}[2]{{\CF\FullName{#1}},\ \Reporter{#1}~\StartPage{#1}\FillIn{, }{#2}{} \Parenthetical{#1}}
+\newcommand{\@bbStatuteLongCite}[2]{\ShortName{#1} #2\FillIn{ }{\Parenthetical{#1}}{}}
+\newcommand{\@bbBookLongCite}[2]{\FillIn{}{\@vol}{ }{\BAF\Authors{#1}}, {\BTF\Title{#1}}\FillIn{ }{#2}{}\ \Parenthetical{#1}}
+\newcommand{\@bbArticleLongCite}[2]{\Authors{#1}, {\ATF\Title{#1}}, {\JTF\Reporter{#1}} \StartPage{#1}\FillIn{, }{#2}{} \Parenthetical{#1}\unskip}
+%\newcommand{\@bbInCollectionLongCite}[2]{\Authors{#1}, {\ATF\Title{#1}} \emph{in} \@vol{\BTF\CollectionTitle{#1}} \StartPage{#1}\FillIn{, }{#2}{} \Parenthetical{#1}}
+\newcommand{\@bbInCollectionLongCite}[2]{\Authors{#1}, {\ATF\Title{#1}}, \emph{in} \@bbsource{\CollectionTitle{#1}}{\StartPage{#1}, #2}{}}
+\newcommand{\@bbInSingleAuthorCollectionLongCite}[2]{\FillIn{}{\@vol}{ }{\BAF\Authors{#1}}, {\ATF\Title{#1}}, \emph{in} \@bbsource{\CollectionTitle{#1}}{\StartPage{#1}, #2}{}}
+\newcommand{\@bbCollectionLongCite}[2]{\FillIn{}{\@vol}{ }{\BTF\Title{#1}}\FillIn{, }{#2}{} \Parenthetical{#1}}
+\def\@bbMiscLongCite#1#2{{\def\pin##1##2{\FillIn{##1}{#2}{##2}}\FullName{#1}}}
+
+%Short-form citation, with and without a pin cite
+\newcommand{\@bbCaseShortCite}[2]{{\em\ShortName{#1}}, \ifdefined\@bbCaseSupra{{\em supra}, }\fi\Reporter{#1}\penalty100\ifempty{#2}{\ \StartPage{#1}}{\ at~#2}}
+\newcommand{\@bbBookShortCite}[2]{\FillIn{}{\@vol}{ }{\BTF\ShortName{#1}}, {\em supra}\IfFootnote{ note \SupraNote{#1}}\ifpin{, at #2}}
+\newcommand{\@bbStatuteShortCite}[2]{\ShortName{#1} #2}
+\newcommand{\@bbArticleShortCite}[2]{\ShortName{#1}, {\em supra}\IfFootnote{ note \SupraNote{#1}}\ifpin{, at #2}}
+\newcommand{\@bbInCollectionShortCite}[2]{\ShortName{#1}, {\em supra}\IfFootnote{ note \SupraNote{#1}}\ifpin{, at #2}}
+\newcommand{\@bbInSingleAuthorCollectionShortCite}[2]{\FillIn{}{\@vol}{ }{\BTF\ShortName{#1}}, {\em supra}\IfFootnote{ note \SupraNote{#1}}\ifpin{, at #2}}
+\newcommand{\@bbCollectionShortCite}[2]{\FillIn{}{\@vol}{ }{\BTF\Title{#1}}, \emph{supra}\IfFootnote{ note \SupraNote{#1}},\ifpin{ at #2}}
+\newcommand{\@bbMiscShortCite}[2]{\ShortName{#1}\ifpin{ #2}}
+
+%Reporter-number-only citation, with and without a pin cite
+\newcommand{\@bbReporterOnlyCite}[1]{\Reporter{#1} \StartPage{#1}}
+\newcommand{\@bbReporterOnlyPinCite}[2]{\Reporter{#1}\penalty100\ at~#2}
+
+%Dispatch a call to the type-specific citation form
+%\newcommand{\@bbIndexCite}[2]{{\protect\frenchspacing\Call{@bb\SrcType{#1}IndexCite}{#1}{#2}}}
+\newcommand{\@bbIndexCite}[2]{\Call{@bb\SrcType{#1}IndexCite}{#1}{#2}}
+\newcommand{\@bbLongCite}[2]{{\protect\frenchspacing\Call{@bb\SrcType{#1}LongCite}{#1}{#2}}}
+\newcommand{\@bbShortCite}[2]{{\protect\frenchspacing\Call{@bb\SrcType{#1}ShortCite}{#1}{#2}}}
+
+%Inner command that performs the citations
+% #1 is cite handle, #2 is pin or blank, #3 can include any of 'lsniIp' 
+\newcommand{\@bbsource}[3] 
+{%
+	%Check that this source is defined
+	\ifcsname #1@Type\endcsname%
+		\relax%
+	\else
+		\errmessage{No source named #1 has been defined}
+	\fi%
+%
+%
+	%If user has passed "!", temporarily set autofootnote to do nothing
+	%It is the case that all printing commands go through autofootnote
+	\let\@@autofootnote=\@autofootnote%
+	\IfSubStr{#3}{!}{\def\@autofootnote##1{}}{}%
+%
+	%If we are going to put this in an autofootnote, we want to take out the preceeding space
+	%Additionally, add a period if a '.' has been set in the flags (which means that a period followed \cite), add a period. 
+	%This period, if it exists, will be stored in \@Period, which is used later on 
+	\def\@Period{}%
+	\ifthenelse{\not \boolean{@bbLawReviewMode} \or \boolean{@bbInFootnote}}{}{\SafeUnskip}%
+	\IfSubStr{#3}{.}{\def\@Period{.}}{}%
+%	
+	\provideboolean{@forceLong}%
+	\provideboolean{@forceShort}%
+	\IfSubStr{#3}{l}{\setboolean{@forceLong}{true}}{\setboolean{@forceLong}{false}}%
+	\IfSubStr{#3}{s}{\setboolean{@forceShort}{true}}{\setboolean{@forceShort}{false}}%
+%
+	%If ``n'' is provided in optional arg, force reporter and page number only (just for Cases)
+	\IfSubStr{#3}{n}
+	{%
+		\ifthenelse{\equal{#2}{}}
+			{\@autofootnote{\@bbSignal\@bbReporterOnlyCite{#1}}}
+			{\@autofootnote{\@bbSignal\@bbReporterOnlyPinCite{#1}{#2}}}%
+%
+		%By definition, this last cite cannot be an "id", so reset the id counter
+		\setcounter{@bbSequentialIds}{0}%
+	}
+	{%
+		%Pull the volume number out of the pincite, or see if provided
+		%The reason it is so messy looking is to deal with the fact that we do not want to fully expand the pincite,
+		%  in case it contains formatting or other non-expandable control sequences
+		\protected@edef\@fullpin{#2}%
+		\expandarg%
+		\StrBetween{\@fullpin}{vol. }{, }[\@vol]%
+		\edef\@fullvol{vol. \@vol, }%
+		\StrDel{\@fullpin}{\@fullvol}[\@pin]%
+		\fullexpandarg%
+%\show\@pin
+%	
+		%If this authority has not been seen before, or we have not seen it in N notes, use complete form
+		\ifthenelse{\boolean{#1@FirstUse} \or \boolean{@forceLong} \or%
+			\( \boolean{@bbLawReviewMode} \and \( \equal{\SrcType{#1}}{Case} \or \equal{\SrcType{#1}}{Statute} \) \and
+				\(	\( \not \boolean{@bbInFootnote} \and \numexpr\thefootnote-\LastNote{#1}+1\relax > \forcelongevery \) \or			
+					\( \boolean{@bbInFootnote} \and \numexpr\thefootnote-\LastNote{#1}\relax > \forcelongevery \) 
+				\)
+			\) }%
+		{%
+%\show\@pin
+			\@autofootnote{\@bbSignal\@bbLongCite{#1}{\@pin}\@Period}%
+			\setcounter{@bbSequentialIds}{0}%
+			\ifthenelse{\boolean{#1@FirstUse}}{\XDef{#1@SupraNote}{\thefootnote}}{}%
+		}
+		{%
+			%If this is the second occurance of this authority in a row, use Id
+			\ifthenelse{\equal{\@bbLastSource}{#1} \and \not \boolean{@forceShort}%
+				\and \value{@bbSequentialIds} < \maxsequentialids}
+			{%
+				%We only display the volume if it exists, and is DIFFERENT from the last; otw clear out
+				\ifthenelse{\equal{\@vol}{\@bbLastVol}}{\edef\@vol{}}{}%
+%
+				%Choose either id/Id based on the capitalization flag
+				\def\@Id{\ifthenelse{\boolean{@bbCapNextSource} \and \equal{\@vol}{}}{Id}{id}}%
+%
+				%The capitalization can be overridden based on the optional argument
+				\IfSubStr{#3}{I}{\def\@Id{Id}}{}%
+				\IfSubStr{#3}{i}{\def\@Id{id}}{}%
+%
+				%Choose either ``at'' or just a space based on the type of authority
+				%\def\@At{\ifthenelse{\equal{\SrcType{#1}}{Statute}}{~}{~at~}}%
+				%ALTERNATE: Use "at" iff the pin is numeric
+				\def\@At{~}%
+				\IfInteger{\@pin}{\def\@At{~at~}}{}%
+%
+				%If the exact page as well (or there is no pincite), just use id; otherwise use Id. with pin cite
+				\ifthenelse{\equal{\@bbLastPinPage}{#2} \or \equal{}{#2} }
+					%{\@autofootnote{\@bbSignal\FillIn{}{\@vol}{ }\emph{\@Id}\@Period}} %I eliminated this because I found cases where there was no way to have a period after the Id.
+					{\@autofootnote{\@bbSignal\FillIn{}{\@vol}{ }\emph{\@Id\@Period}}}%
+					{\@autofootnote{\@bbSignal\FillIn{}{\@vol}{ }\emph{\@Id.}\@At\@pin\@Period}}%
+				\stepcounter{@bbSequentialIds}%
+			}%
+			{%	
+				%If this is not the second-in-a-row occurence of this authority, use short form
+				\@autofootnote{\@bbSignal\@bbShortCite{#1}{\@pin}\@Period}%
+				\setcounter{@bbSequentialIds}{0}%
+			}%
+		}%
+	}%
+%
+	%Indicate that this source has been used, so subsequent uses use short form
+	%This gets into the internals of ifthen.sty, basically \setboolean calls the macro \<Boolean-Variable-Name><true-or-false>
+	%By default, \setboolean is local to the group; we do the following to make the change global
+	\globalsetboolean{#1@FirstUse}{false}%
+%
+	%Store the last used source, as well as pinpage and volume (if present) in that source, for determining Id
+	\xdef\@bbLastSource{#1}%
+	%\xdef\@bbLastPinPage{\detokenize{#2}}%
+	\protected@xdef\@bbLastPinPage{#2}%
+	\ifthenelse{\not\equal{\@vol}{}}{\xdef\@bbLastVol{\@vol}}{}%
+%
+	%If in law review mode, store the footnote number, so we can force long cites after 5 footnotes
+	\XDef{#1@LastNote}{\thefootnote}%
+%	
+	%Record this use into the index, \pagenumber is the command that will be used to format
+%PREVIOUSLY THIS WAS FULLNAME, WHY THE CHANGE
+	%\index{\Call{#1@IndexType}}{\FullName{#1}@\@bbIndexCite{#1}{#2}|pagenumber}%
+	%\index{\Call{#1@IndexType}}{\ShortName{#1}@\@bbIndexCite{#1}{#2}|pagenumber}%
+	%\index{\Call{#1@IndexType}}{\ShortName{#1}@\@bbIndexCite{#1}{#2}}%
+	\begingroup%
+	\def\pin##1##2{}%
+	\IfSubStr{#3}{*}{}{%	
+		\ifempty{\IndexType{#1}}{}{%
+			\index{\IndexType{#1}}{\@bbIndexCite{#1}{#2}}%
+		}%
+	}%
+	\endgroup%
+%
+	%Assume that we will capitalize the next Id, unless a signal word comes between
+	\globalsetboolean{@bbCapNextSource}{true}%
+	\def\@bbSignal{}%
+%
+	%Make sure to restore autofootnote (in case "!" was passed in, in which case it was redefined to do nothing)
+	\let\@autofootnote=\@@autofootnote%
+}
+
+%%
+%%~\par
+%%
+%%\noindent
+%%\begingroup\raggedright\hyphenpenalty=10000\hangindent=1.5em
+%%\texttt{\bf \textbackslash{}See, \textbackslash{}Seealso, \textbackslash{}Seeeg, \textbackslash{}Seegenerally, \textbackslash{}Cf, \textbackslash{}Butsee, \textbackslash{}Butseeeg, \textbackslash{}Butcf, \textbackslash{}Compare, \textbackslash{}Contra, \textbackslash{}Accord} --- Introductory Signals 
+%%\endgroup
+%%
+%% \begin{Example}
+%%   \See \pincite{Marbury}{117}. \\
+%%   \Seealso \pincite{Marbury}{120}. \\
+%%   \Cf \pincite{Lochner}{602}. 
+%% \end{Example}
+%%
+%%  \noindent These commands insert the italicized signal word in front of the citation,
+%%  and cause the cite command to automatically handle correct capitalization of an ``\textit{id.},'' should one be used.
+%%  Each command has both a capitalized (_\See_, _\Cf_, etc.) and a non-capitalized (_\see_, _\cf_, etc.) version.
+%%  Also, in law review mode, they will correctly appear in the footnote with the citation, obviating the need to wrap 
+%%  every source in a _\footnote_ command. 
+
+%\newcommand{\See}{\def\@bbSignal{\emph{See} }\setboolean{@bbCapNextSource}{false}}
+%\newcommand{\Seealso}{\def\@bbSignal{\emph{See also} }\setboolean{@bbCapNextSource}{false}}
+%\newcommand{\Seeeg}{\def\@bbSignal{\emph{See}, \emph{e.g.}, }\setboolean{@bbCapNextSource}{false}}
+%\newcommand{\Seegenerally}{\def\@bbSignal{\emph{See}, \emph{generally}, }\setboolean{@bbCapNextSource}{false}}
+%\newcommand{\Cf}{\def\@bbSignal{\emph{Cf.\@} }\setboolean{@bbCapNextSource}{false}}
+%\newcommand{\Butsee}{\def\@bbSignal{\emph{But see} }\setboolean{@bbCapNextSource}{false}}
+%\newcommand{\Contra}{\def\@bbSignal{\emph{Contra} }\setboolean{@bbCapNextSource}{false}}
+%
+%\renewcommand{\see}{\def\@bbSignal{\emph{see} }\setboolean{@bbCapNextSource}{false}}
+%\newcommand{\seealso}{\def\@bbSignal{\emph{see also} }\setboolean{@bbCapNextSource}{false}}
+%\newcommand{\seeeg}{\def\@bbSignal{\emph{see}, \emph{e.g.}, }\setboolean{@bbCapNextSource}{false}}
+%\newcommand{\seegenerally}{\def\@bbSignal{\emph{see}, \emph{generally}, }\setboolean{@bbCapNextSource}{false}}
+%\newcommand{\cf}{\def\@bbSignal{\emph{cf.\@} }\setboolean{@bbCapNextSource}{false}}
+%\newcommand{\butsee}{\def\@bbSignal{\emph{but see} }\setboolean{@bbCapNextSource}{false}}
+%\newcommand{\contra}{\def\@bbSignal{\emph{contra} }\setboolean{@bbCapNextSource}{false}}
+
+%In normal mode, introductory-signal macros can be used whenever an italicized \see, \cf, etc. is desired. That is, there is no need for them
+%to be placed in front of a citation. In law-review mode, however, because of the behavior where they are pulled into the footnotes, they can only
+%be used before a citation, or in the text of a footnote (preferably in a _\citetext_ or _\citeclause_, both of which will prevent the signal 
+%from affecting subsequent citations). Otherwise, they will be stored and inserted in front of the \emph{following} citation, 
+%however much later that may be, which is almost certainly not what was intended.
+
+%\def\@DefSignal#1{\def\@bbtemp{#1}\futurelet\@NextToken\@@DefSignal}
+%\def\@@DefSignal{\ifx\@NextToken\cite \@SetNextSignal{\@bbtemp}\else%
+                 %\ifx\@NextToken\pincite \@SetNextSignal{\@bbtemp}\else%
+                 %\ifx\@NextToken\Id \@SetNextSignal{\@bbtemp}\else%
+                 %\ifx\@NextToken\id \@SetNextSignal{\@bbtemp}\else%
+                 %\@bbtemp\xspace\fi\fi\fi\fi}
+%\def\@SetNextSignal#1{\def\@bbSignal{#1 }\globalsetboolean{@bbCapNextSource}{false}}
+
+\def\@DefSignal#1{%
+	\ifthenelse{\not \boolean{@bbLawReviewMode} \or \boolean{@bbInFootnote}}%
+		{\globalsetboolean{@bbCapNextSource}{false}#1\xspace}%
+		{\globalsetboolean{@bbCapNextSource}{false}\def\@bbSignal{#1 }}%
+}
+	
+\newcommand{\See}{\@DefSignal{\emph{See}}}
+\newcommand{\Seealso}{\@DefSignal{\emph{See also}}}
+\newcommand{\Seeeg}{\@DefSignal{\emph{See, e.g.},}}
+\newcommand{\Seegenerally}{\@DefSignal{\emph{See generally}}}
+\newcommand{\Cf}{\@DefSignal{\emph{Cf.\@}}}
+
+\newcommand{\Butsee}{\@DefSignal{\emph{But see}}}
+\newcommand{\Butseeeg}{\@DefSignal{\emph{But see, e.g.},}}
+\newcommand{\Butcf}{\@DefSignal{\emph{But cf.\@}}}
+
+\newcommand{\Compare}{\@DefSignal{\emph{Compare}}}
+\newcommand{\Accord}{\@DefSignal{\emph{Accord}}}
+\newcommand{\Contra}{\@DefSignal{\emph{Contra}}}
+
+\renewcommand{\see}{\@DefSignal{\emph{see}}}
+\newcommand{\seealso}{\@DefSignal{\emph{see also}}}
+\newcommand{\seeeg}{\@DefSignal{\emph{see, e.g.},}}
+\newcommand{\cf}{\@DefSignal{\emph{cf.\@}}}
+
+\newcommand{\butsee}{\@DefSignal{\emph{but see}}}
+\newcommand{\butseeeg}{\@DefSignal{\emph{but see, e.g.},}}
+\newcommand{\butcf}{\@DefSignal{\emph{but cf.\@}}}
+
+\newcommand{\compare}{\@defSignal{\emph{Compare}}}
+\newcommand{\accord}{\@defSignal{\emph{Accord}}}
+\newcommand{\contra}{\@defSignal{\emph{Contra}}}
+
+\newcommand{\etseq}{\emph{et seq.}}
+
+%%
+%%\section{Miscellaneous}
+%%
+
+
+%%
+%% \noindent
+%%_\S, \P_ --- Section and Paragraph symbols ``\S\unskip, \P\unskip,'' preserving following space.
+%%
+\let\RealSectionSymbol=\S
+\let\RealParaSymbol=\P
+\protected\def\S{\RealSectionSymbol\xspace}
+\protected\def\P{\RealParaSymbol\xspace}
+\xspaceaddexceptions{\S \P}
+
+%%
+%% \noindent
+%%_\ldots, \ldotss_ --- Non-breaking 3-dot and 4-dot Ellipses ``\ldots , \ldotss'' 
+%%
+%% \noindent
+%%_\ellipsedotspacing_ --- Gap between dots in _\ldots_ (default \ellipsedotspacing) 
+%%
+
+\newcommand{\ellipsedotspacing}{2.5pt}
+\def\ldots{\hbox{.\hspace{\ellipsedotspacing}.\hspace{\ellipsedotspacing}.}\xspace}
+\def\ldotss{\hbox{.\hspace{\ellipsedotspacing}.\hspace{\ellipsedotspacing}.\hspace{\ellipsedotspacing}.}\xspace}
+
+%%
+%% \noindent
+%%_\Ordinal, \ordinal_ --- Given an integer, convert into a textual ordinal number (through Tenth) 
+%%
+\newcommand\Ordinal[1]{\ifcase\value{#1}Zeroth\or First\or Second\or Third\or Fourth\or Fifth \or Sixth\or Seventh\or Eighth\or Ninth\or Tenth\else \error{Counter is too high for ordinal}\fi}
+\newcommand\ordinal[1]{\ifcase\value{#1}zeroth\or first\or second\or third\or fourth\or fifth\or sixth\or seventh\or eighth\or ninth\or tenth\else \error{Counter is too high for ordinal}\fi}
+
+%%
+%% \noindent
+%%_\availableat{URL}_ --- Provides a web citation in the text, using the URL package 
+%%
+\newcommand{\availableat}[1]{\protect\emph{available at} \protect\url{#1}}
+
+%%
+%% \noindent
+%% _\makeandletter_ --- Allows ampersands to appear in the text.
+%%
+%% \noindent
+%% _\makeandtab_ --- Returns ampersands to their default definition.
+%%
+\def\makeandletter{\catcode`\&=11}
+\def\makeandtab{\catcode`\&=4}
+
+\newcommand{\iffileexists}[3]{{%
+  \newread\traux
+  \openin\traux=#1\relax%
+  \ifeof\traux%
+  #3%
+  \else%
+  #2%
+  \fi%
+  \closein\traux%
+}}
+
+\def\printindex#1{\@input{#1.ind}}
+
+%%
+%%\section{Configuration Options}
+%%
+%% \noindent _\CF, \BTF, \ATF, \BAF_ --- Fonts to be used in citations
+%%
+%% These define the fonts used for Cases, Book Titles, Article Titles, and Book Authors, respectively.
+%% In normal mode, the latter three are defined to _\em_, and _\BAF_ is empty (roman).
+%% In lawreview mode, cases are in roman font, Article Titles _\em_,  and Book Titles and Authors small-capped.
+%%
+%% These can be redefined as needed. Note that, because _\em_ is used, italics can be converted to underlines by including
+%% _\usepackage{ulem}_ at the start of the file.
+%%
+
+%Court Documents: Case title and book title italicized
+\def\CF{\em} %Case [Title] Format 
+\def\BTF{\em} %Book Title Format 
+\def\ATF{\em} %Article Title Format 
+\def\JTF{} %Journal Title Format 
+\def\BAF{} %Book Author Format 
+\def\PeriodOrComma{,}
+\def\IfLawReview#1#2{#2}
+
+%%~\par
+%%
+%%\noindent {\bf\large Package Option _lawreview_} --- Switch to Law Review-type formatting 
+%%
+%% By adding this option to the package declaration, citations will display case titles in roman font, 
+%% while author and title are in small-caps. Citations will automatically be made into footnotes, by default 10pt. 
+%% If the source is combined with a introductory signal (\emph{See, Cf., etc.} ), the signal will also be 
+%% placed in the footnote. However, if a citation has multiple source in a string cite or parentheticals, 
+%% the entire footnote should be put into a LaTeX _\footnote_ command, or _\citetext_.
+ 
+
+\def\@bbSetLawReview{%
+%
+	\def\CF{} 			%Case [Title] Format 
+	\def\ATF{\em} 	%Article Title Format 
+	\def\JTF{\scshape} %Journal Title Format 
+	\def\BTF{\scshape} 	%Book Title Format 
+	\def\BAF{\scshape} 	%Book Author Format 
+%
+	\let\@footnote\footnote%
+	\def\footnote##1{%
+		\setboolean{@bbInFootnote}{true}%
+		\@footnote{##1}%
+		\setboolean{@bbInFootnote}{false}%
+	}%
+%
+	\setboolean{@bbLawReviewMode}{true}%
+%
+	\def\PeriodOrComma{.}%
+	\def\IfLawReview##1##2{##1}%
+}
+
+\DeclareOption{lawreview}{\@bbSetLawReview}
+
+%%%
+%%%\noindent Package Option _casesupra_ --- Use \emph{supra} in case short-form citations. 
+%%%
+%%% The Bluebook says that subsequent citations to a case should not use the word \textit{supra}
+%%% to indicate that the case has been fully cited previously. However, in practice, this is 
+%%% often seen, especially in Supreme Court opinions with their three parallel citations. 
+\DeclareOption{casesupra}
+{%
+	\def\@bbCaseSupra{}%
+}
+
+\ProcessOptions
+
+%%
+%%\noindent _\indexglue, \indexpenalty_ --- Parameters for line-breaking Table of Authorities entries 
+%%
+%% In classes that create a table of authorities (such as _lawbrief.cls_), we encourage LaTeX to break
+%% long lines immediately after the Long Name, such that the citation is put on the next line
+%% (i.e. rather than putting a break in the middle of the citation). These two parameters control that,
+%% and generally will not need to be changed. The _\indexglue_ defaults to _0in plus 1.fil_, and _\indexpenalty_
+%% defaults to _-999_. 
+
+%\def\indexglue{\hspace{0in plus 1.fil}}
+%\def\indexglue{\hspace{3in plus 1.fill minus 3in}}
+\def\indexglue{}
+\def\indexpenalty{-10}
+\def\idxbreak{\indexglue\penalty\indexpenalty} %Helper routine that combines the above two
+
+%%
+%%\noindent _\maxsequentialids_ --- Maximum number of \textit{Id.}'s in a row
+%%
+%% After this number of sequential id's, we force a short cite for clarity. 
+%% Set it very large to disable this functionality.
+%% 
+\def\maxsequentialids{99}
+
+%%
+%%\noindent _\forcelongevery_ --- Force a long citation after a source has not appeared in this many footnotes 
+%%
+%% The Bluebook has a ``5 Footnote Rule,'' in which a source that has not appeared in the last five footnotes is required
+%% to be provided as a long citation. Therefore, this parameter is set to 5 by default. Disable it by setting it to a large 
+%% value. Note that it has no effect unless in lawreview mode.
+%% 
+\def\forcelongevery{5}
+
+%\endinput
+
+%%%\end{document}

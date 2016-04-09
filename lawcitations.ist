@@ -1,0 +1,46 @@
+%===============================================================================
+% lawcitations.ist - makeindex style file for an appellate brief table of authorities
+% Copyright (C) 2009-2013  Christopher De Coro
+% Should be placed within a path specified by $INDEXSTYLE
+%
+% This file is part of the LaWTeX package, for more information, see:
+%   Project Homepage: http://www.cs.princeton.edu/~cdecoro/lawtex/ 
+%   Code Repository: https://sourceforge.net/projects/lawtex/
+%
+% This program is free software: you can redistribute it and/or modify
+% it under the terms of the GNU General Public License as published by
+% the Free Software Foundation, either version 3 of the License, or
+% (at your option) any later version.
+%
+% This program is distributed in the hope that it will be useful,
+% but WITHOUT ANY WARRANTY; without even the implied warranty of
+% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+% GNU General Public License for more details.
+%
+% You should have received a copy of the GNU General Public License
+% along with this program.  If not, see <http://www.gnu.org/licenses/>.
+%===============================================================================
+quote '~'
+preamble "\\begin{theindex}\n"
+postamble "\n\\end{theindex}\n\n"
+headings_flag 0
+group_skip ""
+line_max 1000
+%delim_0 "~\\leaders \\hbox to 0.125in{\\hfil.\\hfil} \\hfill\\pagenumber{"
+%delim_1 "~\\leaders \\hbox to 0.125in{\\hfil.\\hfil} \\hfill\\pagenumber{"
+
+%Delimiters for first and second levels are the same (third-level normally not used)
+% They place a dotted leader between the case and the first page number
+% Subsequent pages then separated by comma and space
+delim_0 "~\\leaders\\hbox to 0.125in{\\hfil.\\hfil} \\hskip2in plus 1.fill minus 1in\\pagenumber{"
+delim_1 "~\\leaders\\hbox to 0.125in{\\hfil.\\hfil} \\hskip2in plus 1.fill minus 1in\\pagenumber{"
+delim_n ", }\\pagenumber{"
+delim_r "}\\pagenumber{--}\\pagenumber{"
+delim_t "}"
+
+item_x1 "\\hfill\\hfill \\par\\penalty1000\\subitem "
+%delim_2 "\\dotfill "
+%delim_r "--"
+encap_prefix "\\"
+encap_infix "{"
+encap_suffix "}"

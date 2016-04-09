@@ -1,0 +1,40 @@
+%===============================================================================
+% arbitrationcitations.ist - makeindex style file for an Vis Moot-style brief table of authorities
+% Copyright (C) 2009-2013  Christopher De Coro
+%
+% This file is part of the LaWTeX package, for more information, see:
+%   Project Homepage: http://www.cs.princeton.edu/~cdecoro/lawtex/ 
+%   Code Repository: https://sourceforge.net/projects/lawtex/
+%
+% This program is free software: you can redistribute it and/or modify
+% it under the terms of the GNU General Public License as published by
+% the Free Software Foundation, either version 3 of the License, or
+% (at your option) any later version.
+%
+% This program is distributed in the hope that it will be useful,
+% but WITHOUT ANY WARRANTY; without even the implied warranty of
+% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+% GNU General Public License for more details.
+%
+% You should have received a copy of the GNU General Public License
+% along with this program.  If not, see <http://www.gnu.org/licenses/>.
+%===============================================================================
+quote '~'
+encap '#'
+postamble "\n\\end{theindex}\n\n"
+headings_flag 0
+heading_prefix "\\centerline{\\bfseries "
+heading_suffix "}\\nopagebreak\n"
+symhead_positive ""
+numhead_positive ""
+group_skip ""
+item_0 "\\tabularnewline\n\\raggedright"
+delim_0 " | \\raggedleft "
+%delim_1 "~\\leaders \\hbox to 0.125in{\\hfil.\\hfil} \\hfill"
+%item_x1 "\\hfill\\hfill \\par	\\subitem "
+delim_n ", "
+%delim_2 "\\dotfill "
+%delim_r "--"
+encap_prefix "\\"
+encap_infix "{"
+encap_suffix "}"
