@@ -40,7 +40,19 @@
 \NeedsTeXFormat{LaTeX2e}
 \ProvidesPackage{bluebook}[2011/11/11 Legal Bluebook-style Citations]
 
-\RequirePackage{ifthen} 
+\RequirePackage{ifthen}
+\RequirePackage{ifxetex}
+\RequirePackage{ifluatex}
+%Needed to fix some notational changes between pdftex and the other engines
+\ifthenelse{\boolean{xetex}}{%
+\let\pdfshellescape\shellescape
+}{%
+\ifluatex
+\RequirePackage{pdftexcmds}
+\let\pdfshellescape\pdf@shellescape
+\else
+\fi
+}
 \RequirePackage{multind} 
 \RequirePackage{xstring} 
 \RequirePackage{xspace} 
